@@ -262,7 +262,7 @@ class RealEstateAgent(Agent):
         if any(x in msg for x in ['startup', 'funding', 'seed', 'series']):
             return "I can help with startup funding channels. Which stage or sector are you exploring?"
         if any(x in msg for x in ['hello', 'hi', 'hey']):
-            return "Hello, thank you for contacting Lion Edge Consultancy. I’m Sarah, your virtual business and advisory assistant. How may I assist you today? Are you looking for training, leadership/sales advisory, or investment opportunities (real estate, startup funding, funds/portfolios)?"
+            return "Hello,I’m Sarah from Lion Edge Consultancy.Are you looking for training, leadership,sales advisory, or investment opportunities?"
         return "I’m here to assist with Lion Edge training, leadership/sales advisory, or investment opportunities (real estate, startup funding, funds/portfolios). What would you like to focus on?"
 
     async def on_start(self, session: AgentSession):
@@ -277,7 +277,7 @@ class RealEstateAgent(Agent):
 
         try:
             speech = session.generate_reply(
-                instructions='Say: "Hello, thank you for contacting Lion Edge Consultancy. I\'m Sarah, your virtual business and advisory assistant. How may I assist you today? Are you looking for training, leadership or sales advisory, or investment opportunities (real estate, startup funding, funds or portfolios)?"'
+                instructions='Say: "Hello. I\'m Sarah from Lion Edge Consultancy. Are you looking for training, leadership or sales advisory, or investment opportunities?"'
             )
 
             # ✅ WAIT FOR GREETING TO FINISH (atomic boundary)
