@@ -6,7 +6,6 @@ import logging
 from typing import List, Dict, Any
 from pydantic import BaseModel, ConfigDict
 from dotenv import load_dotenv
-from datetime import datetime
 
 from livekit import agents
 from livekit.agents import (
@@ -83,29 +82,20 @@ current_job_context = None
 
 class InquiryData(BaseModel):
     model_config = ConfigDict(extra="allow")
-    
-    # Common fields
-    inquiry_type: str  # "property_search", "sell_property", "estimation", "advice"
-    
-    # Property search fields
-    property_type: str | None = None  # "appartement", "maison", "terrain", etc.
-    location: str | None = None
-    max_budget: float | None = None
-    surface_min: float | None = None
-    rooms: int | None = None
-    features: List[str] | None = None
-    
-    # Sell property fields
-    property_condition: str | None = None
-    
-    # Estimation fields
-    estimated_value: float | None = None
+    # Common fields for Lion Edge scopes
+    inquiry_type: str  # "training", "investment_opportunities", "real_estate_opportunities", "startup_funding", "funds_and_portfolios", "advisory"
+    topic: str | None = None
+    region: str | None = None
+    budget_or_range: str | None = None
+    audience_size: str | None = None
+    timeline: str | None = None
+    objectives: str | None = None
+    notes: str | None = None
 
 
 class CreateInquiryArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    
-    inquiry_type: str  # "property_search", "sell_property", "estimation", "advice"
+    inquiry_type: str  # "training", "investment_opportunities", "real_estate_opportunities", "startup_funding", "funds_and_portfolios", "advisory"
     inquiry_data: Dict[str, Any]
     phone: str | None = None
     name: str | None = None
@@ -116,7 +106,7 @@ def create_inquiry_tool_factory(agent_instance):
     """Factory function to create a create_inquiry tool bound to a specific agent instance"""
     @function_tool()
     async def create_inquiry(inquiry_type: str, inquiry_data: Dict[str, Any], phone: str | None = None, name: str | None = None):
-        """Create a real estate inquiry with the provided information."""
+        """Create an inquiry for Lion Edge Consultancy with the provided information."""
         if agent_instance and agent_instance.inquiry_created:
             return "I'm sorry, but I can only create one inquiry per call. Your previous inquiry has already been saved."
 
@@ -207,6 +197,7 @@ class RealEstateAgent(Agent):
         self.termination_started = False
         self.inquiry_created = False
         self.job_context = job_context
+        self.greeting_active = False  # Uninterruptible greeting phase flag
 
         global current_agent
         current_agent = self
@@ -237,7 +228,13 @@ class RealEstateAgent(Agent):
 
     async def on_message(self, message, session):
         if self.termination_started:
-            return "The call is ending. Merci d'avoir contacté Immo Vallée ! Au revoir !"
+            return ""
+
+        # 🚫 HARD BLOCK during greeting
+        if self.greeting_active:
+            log.info("🔒 Discarding input during greeting")
+            return ""
+
         try:
             # Use reasonable timeout - balance between waiting and responsiveness
             # If LLM is consistently slow, fallback will kick in
@@ -256,28 +253,42 @@ class RealEstateAgent(Agent):
 
     def _get_smart_fallback_response(self, msg: str):
         msg = msg.lower()
-        if any(x in msg for x in ['buy', 'acheter', 'purchase', 'property', 'bien', 'appartement', 'maison']):
-            return "I can help you find a property! What type of property are you looking for?"
-        if any(x in msg for x in ['sell', 'vendre', 'sale']):
-            return "I can help you sell your property! What type of property would you like to sell?"
-        if any(x in msg for x in ['estimate', 'estimation', 'value', 'prix']):
-            return "I can help you estimate your property! Where is your property located?"
-        if any(x in msg for x in ['hello', 'hi', 'hey', 'bonjour']):
-            return "Hello! Welcome to Immo Vallée. How can I help you today?"
-        return "I'm here to help you with your real estate needs. Are you looking to buy, sell, or estimate a property?"
+        if any(x in msg for x in ['training', 'workshop', 'bootcamp', 'leadership', 'sales']):
+            return "I can help with training and workshops. What outcomes or teams are you focusing on?"
+        if any(x in msg for x in ['investment', 'investor', 'fund', 'portfolio']):
+            return "I can help with investment and opportunity advisory. What type of opportunities are you looking to explore?"
+        if any(x in msg for x in ['real estate', 'property']):
+            return "I can help discuss real estate opportunities. What market or returns are you interested in?"
+        if any(x in msg for x in ['startup', 'funding', 'seed', 'series']):
+            return "I can help with startup funding channels. Which stage or sector are you exploring?"
+        if any(x in msg for x in ['hello', 'hi', 'hey']):
+            return "Hello, thank you for contacting Lion Edge Consultancy. I’m Sarah, your virtual business and advisory assistant. How may I assist you today? Are you looking for training, leadership/sales advisory, or investment opportunities (real estate, startup funding, funds/portfolios)?"
+        return "I’m here to assist with Lion Edge training, leadership/sales advisory, or investment opportunities (real estate, startup funding, funds/portfolios). What would you like to focus on?"
 
     async def on_start(self, session: AgentSession):
         self.current_session = session
-        # Start greeting immediately - generate_reply returns a SpeechHandle, not a coroutine
-        # Don't await it - let it run in the background
+
+        # 🔒 Start atomic greeting
+        self.greeting_active = True
+
+        if os.getenv("ENABLE_TTS", "1") == "0":
+            self.greeting_active = False
+            return
+
         try:
-            # Generate greeting (enabled by default, can be disabled with ENABLE_TTS=0)
-            if os.getenv("ENABLE_TTS", "1") != "0":
-                session.generate_reply(
-                    instructions='Say the complete greeting in french: "Bonjour ! Merci de contacter Immo Vallée. Je suis Sarah, votre conseillère immobilière. Comment puis-je vous aider aujourd\'hui ?" Say all parts of the greeting - do not skip any words.'
-                )
+            speech = session.generate_reply(
+                instructions='Say: "Hello, thank you for contacting Lion Edge Consultancy. I\'m Sarah, your virtual business and advisory assistant. How may I assist you today? Are you looking for training, leadership or sales advisory, or investment opportunities (real estate, startup funding, funds or portfolios)?"'
+            )
+
+            # ✅ WAIT FOR GREETING TO FINISH (atomic boundary)
+            await speech.wait_for_done()
+
         except Exception as e:
-            log.warning(f"Greeting generation error: {e}, continuing anyway")
+            log.warning(f"Greeting failed: {e}")
+
+        finally:
+            # 🔓 End atomic phase ONLY after last word
+            self.greeting_active = False
 
     # ------------------------------------------------------------
     # 🧩 FULL TERMINATION SEQUENCE
@@ -295,7 +306,7 @@ class RealEstateAgent(Agent):
                     if os.getenv("ENABLE_TTS", "1") != "0":
                         await asyncio.wait_for(
                             self.current_session.generate_reply(
-                                instructions="Say: Merci d'avoir contacté Immo Vallée ! Au revoir !"
+                                instructions="Say: Thank you for contacting Lion Edge Consultancy. Goodbye."
                             ),
                             timeout=4.0
                         )
@@ -480,7 +491,6 @@ async def entrypoint(ctx: JobContext):
     
     realtime_model = realtime.RealtimeModel(
         api_key=openai_api_key,
-        model="gpt-4o-mini-realtime-preview-2024-12-17",
         voice="alloy",
         modalities=["audio", "text"],
         turn_detection=turn_detection_config,
